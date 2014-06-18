@@ -73,7 +73,9 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         defineConnectionToBroker(brokerHostName);
     }
 
-
+    /**
+     * @return START_STICKY to make sure that if service gets killed  by Android due to low resources, it should be restarted once the resources are available
+     */
     @Override
     public int onStartCommand(final Intent intent, int flags, final int startId) {
         handleStart(intent, startId);
@@ -82,19 +84,27 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
             public void run() {
                 handleStart(intent, startId);
             }
-        }, "MQTTservice").start();
+        }, "MQTTMessageService").start();
 
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
+    /**
+     *
+     * @param intent
+     * @param startId
+     */
     synchronized void handleStart(Intent intent, int startId) {
         if (mqttClient == null) {
             stopSelf();
             return;
         }
 
+        /**
+         * respect user's choice not to use Background data ("tick" in "Accounts and Sync")
+         */
         ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-        if (cm.getActiveNetworkInfo() == null) {
+        if (!cm.getActiveNetworkInfo().isConnected()) {
             connectionStatus = MQTTConnectionStatus.NOTCONNECTED_DATADISABLED;
             broadcastServiceStatus("Not connected - background data disabled");
             return;
@@ -187,6 +197,11 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         return mBinder;
     }
 
+    /**
+     * trying to do local binding while minimizing leaks
+     * Geoff Bruckner - http://groups.google.com/group/cw-android/browse_thread/thread/d026cfa71e48039b/c3b41c728fedd0e7?show_docid=c3b41c728fedd0e7
+     * @param <S>
+     */
     public class LocalBinder<S> extends Binder {
         private WeakReference<S> mService;
 
@@ -242,6 +257,11 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         broadcastServiceStatus("Disconnected");
     }
 
+    /**
+     * Callback method called when we no longer have a connection to the message broker server
+     * WakeLock is minimal, just enough to keep CPU running while taks completes
+     * @throws Exception
+     */
     public void connectionLost() throws Exception {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MQTT");
@@ -261,6 +281,14 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         wl.release();
     }
 
+    /**
+     * This is a callback method that is being called when a message is received from TCP/IP connection. This seems to run even if the phone is asleep;
+     * therefore, seems like the connection is persistent.
+     * @param topic
+     * @param payloadbytes
+     * @param qos
+     * @param retained
+     */
     public void publishArrived(String topic, byte[] payloadbytes, int qos, boolean retained) {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MQTT");
@@ -274,6 +302,10 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         wl.release();
     }
 
+    /**
+     * Create a client connection object that defines our connection to a message broker server
+     * @param brokerHostName
+     */
     private void defineConnectionToBroker(String brokerHostName) {
         int brokerPortNumber = 1883;
         String mqttConnSpec = "tcp://" + brokerHostName + "@" + brokerPortNumber;
@@ -353,6 +385,9 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
             mqttClient = null;
         }
 
+        /**
+         * Remove the ongoing notification that warns users that there was a long-running ongoing service running
+         */
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.cancelAll();
     }
@@ -381,6 +416,10 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         }
     }
 
+    /**
+     * When network connection state changes, make sure connection can be re-established;
+     * otherwise, stop any network related activity (poll, ping, retry, etc...)
+     */
     private class NetworkConnectionIntentReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context ctx, Intent intent) {
@@ -397,6 +436,10 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         }
     }
 
+    /**
+     * Create AlarmManager so that it can wake-up Android (and wake-up CPU) to send PING message
+     * Server gives process "grace-period" of interval plus half; therefore, should have enough time to send it
+     */
     private void scheduleNextPing() {
         PendingIntent pendingIntent = PendingIntent.getBroadcast(this, 0,
                 new Intent(AppConfig.MQTT_PING_ACTION),
@@ -411,6 +454,11 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
                 pendingIntent);
     }
 
+    /**
+     * No need for the WakeLock, as according to the docs,
+     * "Alarm Manager holds a CPU wake lock as long as the alarm receiver's onReceive() method is executing.
+     * This guarantees that the phone will not sleep until you have finished handling the broadcast."
+     */
     public class PingSender extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -464,6 +512,11 @@ public class MQTTMessageService extends Service implements MqttSimpleCallback {
         return mqttClientId;
     }
 
+    /**
+     * isConnectionLost() on MQTT library is not reliable enough to give us information about the connection;
+     * therefore, native Android notification system to provide the info
+     * @return the state of connection
+     */
     private boolean isOnline() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         return (cm.getActiveNetworkInfo() != null &&

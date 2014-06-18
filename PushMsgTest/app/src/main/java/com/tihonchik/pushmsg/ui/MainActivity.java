@@ -1,6 +1,7 @@
 package com.tihonchik.pushmsg.ui;
 
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -101,5 +102,14 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         unregisterReceiver(statusUpdateIntentReceiver);
         unregisterReceiver(messageIntentReceiver);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            NotificationManager mNotificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            mNotificationManager.cancel(AppDefines.MQTT_NOTIFICATION_UPDATE);
+        }
     }
 }
